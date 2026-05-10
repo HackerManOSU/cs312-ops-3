@@ -1,0 +1,93 @@
+---
+- name: Configure Minecraft server from ECR image
+  hosts: minecraft
+  become: true
+
+  vars:
+    data_dir: /data
+    container_name: minecraft
+    image_uri: "{{ ecr_repo_uri }}:{{ image_tag }}"
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install runtime prerequisites
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - awscli
+          - python3-pip
+        state: present
+
+    - name: Install Docker SDK for Python
+      ansible.builtin.pip:
+        name: docker
+        state: present
+        break_system_packages: true
+
+    - name: Ensure Docker service is running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create Minecraft data directory
+      ansible.builtin.file:
+        path: "{{ data_dir }}"
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0755"
+
+    - name: Check whether S3 backup exists
+      ansible.builtin.command:
+        cmd: "aws s3 ls s3://{{ backup_bucket }}/minecraft/ --region {{ backup_bucket_region }}"
+      register: s3_backup_check
+      changed_when: false
+      failed_when: false
+
+    - name: Restore world data from S3 if backup exists
+      ansible.builtin.command:
+        cmd: "aws s3 sync s3://{{ backup_bucket }}/minecraft/ {{ data_dir }}/ --region {{ backup_bucket_region }}"
+      when: s3_backup_check.rc == 0
+      changed_when: true
+
+    - name: Log in to ECR using instance profile credentials
+      ansible.builtin.shell: |
+        aws ecr get-login-password --region {{ aws_region }} \
+        | docker login --username AWS --password-stdin {{ ecr_repo_uri.split('/')[0] }}
+      changed_when: false
+
+    - name: Pull pinned Minecraft image from ECR
+      community.docker.docker_image:
+        name: "{{ image_uri }}"
+        source: pull
+        force_source: true
+
+    - name: Start Minecraft server container
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        image: "{{ image_uri }}"
+        state: started
+        restart_policy: unless-stopped
+        published_ports:
+          - "25565:25565"
+        volumes:
+          - "{{ data_dir }}:/data"
+        env:
+          EULA: "TRUE"
+          MOTD: "{{ minecraft_motd }}"
+          MEMORY: "1G"
+
+    - name: Wait for Minecraft server to initialize
+      ansible.builtin.shell: |
+        for i in $(seq 1 18); do
+          docker logs {{ container_name }} 2>&1 | grep -q "Done" && exit 0
+          sleep 10
+        done
+        docker logs {{ container_name }}
+        exit 1
+      changed_when: false
