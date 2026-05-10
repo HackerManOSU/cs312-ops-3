@@ -18,9 +18,41 @@
       ansible.builtin.apt:
         name:
           - docker.io
-          - awscli
           - python3-pip
+          - curl
+          - unzip
         state: present
+
+    - name: Check if AWS CLI is already installed
+      ansible.builtin.command:
+        cmd: aws --version
+      register: aws_cli_check
+      changed_when: false
+      failed_when: false
+
+    - name: Download AWS CLI v2 installer
+      ansible.builtin.get_url:
+        url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        dest: /tmp/awscliv2.zip
+        mode: "0644"
+      when: aws_cli_check.rc != 0
+
+    - name: Unzip AWS CLI v2 installer
+      ansible.builtin.unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: true
+      when: aws_cli_check.rc != 0
+
+    - name: Install AWS CLI v2
+      ansible.builtin.command:
+        cmd: /tmp/aws/install
+      when: aws_cli_check.rc != 0
+
+    - name: Verify AWS CLI installation
+      ansible.builtin.command:
+        cmd: aws --version
+      changed_when: false
 
     - name: Install Docker SDK for Python
       ansible.builtin.pip:
@@ -44,14 +76,14 @@
 
     - name: Check whether S3 backup exists
       ansible.builtin.command:
-        cmd: "aws s3 ls s3://{{ backup_bucket }}/minecraft/ --region {{ backup_bucket_region }}"
+        cmd: "aws s3 ls s3://{{ backup_bucket }}/minecraft/ --region {{ aws_region }}"
       register: s3_backup_check
       changed_when: false
       failed_when: false
 
     - name: Restore world data from S3 if backup exists
       ansible.builtin.command:
-        cmd: "aws s3 sync s3://{{ backup_bucket }}/minecraft/ {{ data_dir }}/ --region {{ backup_bucket_region }}"
+        cmd: "aws s3 sync s3://{{ backup_bucket }}/minecraft/ {{ data_dir }}/ --region {{ aws_region }}"
       when: s3_backup_check.rc == 0
       changed_when: true
 
@@ -80,7 +112,9 @@
         env:
           EULA: "TRUE"
           MOTD: "{{ minecraft_motd }}"
-          MEMORY: "1G"
+          MEMORY: "2G"
+          SERVER_PORT: "25565"
+          VERSION: "1.21.1"
 
     - name: Wait for Minecraft server to initialize
       ansible.builtin.shell: |

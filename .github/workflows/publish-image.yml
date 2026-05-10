@@ -6,6 +6,7 @@ on:
       - "ops3-*"
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
   UPSTREAM_IMAGE: itzg/minecraft-server:java21

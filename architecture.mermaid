@@ -1,0 +1,17 @@
+flowchart TD
+    Dev[Developer Laptop] -->|terraform apply| TF[Terraform]
+    TF --> EC2[EC2 Minecraft Host]
+    TF --> SG[Security Group: SSH + TCP 25565]
+    TF --> IP[Public IP]
+
+    Dev -->|ansible-playbook| Ansible[Ansible]
+    Ansible -->|install Docker + AWS CLI| EC2
+    Ansible -->|docker login using LabInstanceProfile| ECR[ECR]
+    Ansible -->|restore world backup| S3[S3 Backup Bucket]
+    Ansible -->|run container /data mount| MC[Minecraft Container]
+
+    GitHub[GitHub Tag Push] --> Actions[GitHub Actions]
+    Actions -->|pull/tag/smoke test| Image[Minecraft Image]
+    Actions -->|push pinned image| ECR
+
+    Player[Minecraft Client] -->|TCP 25565| EC2
