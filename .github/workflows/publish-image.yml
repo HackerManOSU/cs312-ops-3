@@ -1,0 +1,61 @@
+name: Publish Minecraft Image
+
+on:
+  push:
+    tags:
+      - "ops3-*"
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  UPSTREAM_IMAGE: itzg/minecraft-server:java21
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Log in to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull upstream Minecraft image
+        run: docker pull $UPSTREAM_IMAGE
+
+      - name: Tag image for ECR
+        run: |
+          IMAGE_TAG=${GITHUB_REF_NAME}
+          ECR_URI=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY
+          docker tag $UPSTREAM_IMAGE $ECR_URI:$IMAGE_TAG
+          echo "IMAGE_URI=$ECR_URI:$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Smoke test Minecraft image
+        run: |
+          docker run -d \
+            --name mc-smoke \
+            -e EULA=TRUE \
+            -e MEMORY=1G \
+            -p 25565:25565 \
+            $IMAGE_URI
+
+          for i in $(seq 1 18); do
+            docker logs mc-smoke 2>&1 | grep -q "Done" && exit 0
+            sleep 10
+          done
+
+          docker logs mc-smoke
+          exit 1
+
+      - name: Push image to ECR
+        run: docker push $IMAGE_URI
